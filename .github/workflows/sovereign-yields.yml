@@ -1,0 +1,43 @@
+name: Actualiser les taux souverains officiels
+on:
+  schedule:
+    - cron: '43 19 * * 1-5'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['scripts/sovereign_yields.py', 'scripts/test_sovereign_yields.py', '.github/workflows/sovereign-yields.yml']
+permissions:
+  contents: write
+concurrency:
+  group: sovereign-yields
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test parsers and last-good preservation
+        run: python -m unittest discover -s scripts -p 'test_sovereign_yields.py'
+      - name: Collect official observations
+        id: collect
+        continue-on-error: true
+        run: python scripts/sovereign_yields.py
+      - name: Publish snapshot and source status
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add sovereign-yields/10y.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'data: refresh official sovereign yields'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Report unavailable or stale sources
+        if: steps.collect.outcome == 'failure'
+        run: |
+          echo 'One or more sources failed or are stale. Last valid observations were preserved; inspect the snapshot status.'
+          exit 1
