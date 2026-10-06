@@ -18,9 +18,13 @@ SOURCES = {
             series=f'FM.M.{c}.EUR.FR2.BB.{c}10YT_RR.YLD',
             url=f'https://webstat.banque-france.fr/export/csv/fr/catalog/FM/FM.M.{c}.EUR.FR2.BB.{c}10YT_RR.YLD',
             note='Moyenne mensuelle du rendement de l’emprunt phare à 10 ans.')
-    for c in ('IT', 'PT')
+    for c in ('IT',)
 }
 SOURCES.update({
+    'PT': dict(source='Banco de Portugal — BPstat (LSEG)', frequency='quotidienne',
+        series='12099459',
+        url='https://bpstat.bportugal.pt/data/v1/domains/26/datasets/690b7b36fd36c0dbe249c48cbbc39524?lang=EN&series_ids=12099459',
+        note='Rendement des obligations du Trésor à taux fixe et maturité résiduelle de 10 ans, en %. Observations quotidiennes LSEG diffusées par BPstat ; publication le premier jour ouvré de la semaine et le deuxième jour ouvré du mois.'),
     'FR': dict(source='Euronext', frequency='quotidienne',
         series='FM.D.FR.EUR.FR2.BB.FRMOYTEC10.HSTA',
         url='https://webstat.banque-france.fr/export/csv/fr/catalog/FM/FM.D.FR.EUR.FR2.BB.FRMOYTEC10.HSTA',
@@ -44,7 +48,37 @@ SOURCES.update({
 def parse(country, raw):
     src = SOURCES[country]
     text = raw.decode('latin1' if country == 'ES' else 'utf-8-sig')
-    if country in ('FR', 'IT', 'PT'):
+    if country == 'PT':
+        dataset = json.loads(text)
+        expected = {'18': '4314', '19': '14', '23': '3482', '29': '3610',
+                    '40': '4263', '45': '2740', '63': '349', '70': '3327'}
+        series = next(s for s in dataset['extension']['series'] if str(s['id']) == src['series'])
+        categories = {str(c['dimension_id']): str(c['category_id']) for c in series['dimension_category']}
+        if dataset['class'] != 'dataset' or dataset['version'] != '2.0' or categories != expected:
+            raise ValueError('Unexpected BPstat series, maturity, frequency, territory or units')
+        ids, sizes = dataset['id'], dataset['size']
+        if set(ids) != set(expected) | {'reference_date'} or len(ids) != len(set(ids)) or len(sizes) != len(ids):
+            raise ValueError('Unexpected BPstat dimensions')
+        indexes = {}
+        for dim, size in zip(ids, sizes):
+            index = dataset['dimension'][dim]['category']['index']
+            indexes[dim] = {str(key): pos for pos, key in enumerate(index)} if isinstance(index, list) else index
+            if len(indexes[dim]) != size or sorted(indexes[dim].values()) != list(range(size)):
+                raise ValueError('Invalid BPstat dimension index')
+        values = dataset['value']
+        if isinstance(values, list) and len(values) != math.prod(sizes):
+            raise ValueError('Invalid BPstat observation count')
+        points = []
+        for day, time_pos in indexes['reference_date'].items():
+            offset = 0
+            for dim, size in zip(ids, sizes):
+                pos = time_pos if dim == 'reference_date' else indexes[dim][expected[dim]]
+                offset = offset * size + pos
+            value = values[offset] if isinstance(values, list) else values.get(str(offset))
+            if value is not None:
+                points.append((day, value))
+        return points
+    if country in ('FR', 'IT'):
         rows = list(csv.DictReader(io.StringIO(text), delimiter=';'))
         expected_frequency = 'D' if src['frequency'] == 'quotidienne' else 'M'
         if not rows or any(r['series_key'] != src['series'] or r['FREQ'] != expected_frequency or r['UNIT'] != 'PC' for r in rows):
@@ -112,7 +146,7 @@ def validated(points, frequency, today):
 
 def fetch_source(country):
     req = urllib.request.Request(SOURCES[country]['url'], headers={
-        'User-Agent': 'Visactu-official-yields/1.0', 'Accept': 'text/csv,text/html;q=0.9,*/*;q=0.8'})
+        'User-Agent': 'Visactu-official-yields/1.0', 'Accept': 'application/json,text/csv,text/html;q=0.9,*/*;q=0.8'})
     with urllib.request.urlopen(req, timeout=50) as res:
         raw = res.read(15_000_001)
     if len(raw) > 15_000_000:
@@ -141,6 +175,11 @@ def collect(previous, fetcher=fetch_source, now=None):
             meta['lastSuccessAt'] = stamp
         except Exception as exc:
             points = old
+            # During the PT migration only, retain honestly labelled monthly data
+            # if BPstat is unavailable. Never merge them into the daily series.
+            if country == 'PT' and not old and old_meta.get('series') == 'FM.M.PT.EUR.FR2.BB.PT10YT_RR.YLD':
+                points = previous.get('data', {}).get(country, [])
+                meta = {**old_meta, 'checkedAt': stamp, 'attemptedSource': src['source']}
             meta['status'] = 'error'
             meta['error'] = type(exc).__name__ + ': ' + str(exc)[:200]
         meta['lastObservation'] = points[-1]['date'] if points else None

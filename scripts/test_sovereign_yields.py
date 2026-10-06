@@ -1,18 +1,20 @@
+import json
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from sovereign_yields import SOURCES, collect, parse, validated
 
-NOW = datetime(2026, 10, 4, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 6, tzinfo=timezone.utc)
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 
 class CollectorTests(unittest.TestCase):
     def fixture(self, c):
-        return parse(c, (FIXTURES / (c + ('.html' if c == 'GR' else '.csv'))).read_bytes())
+        suffix = '.json' if c == 'PT' else '.html' if c == 'GR' else '.csv'
+        return parse(c, (FIXTURES / (c + suffix)).read_bytes())
 
     def test_real_official_formats(self):
-        expected = {'FR': 4.899, 'IT': 4.3772, 'PT': 3.8608, 'GR': 4.53}
+        expected = {'FR': 4.899, 'IT': 4.3772, 'PT': 4.0, 'GR': 4.53}
         for c, src in SOURCES.items():
             points = validated(self.fixture(c), src['frequency'], NOW.date())
             self.assertGreater(len(points), 0)
@@ -67,6 +69,45 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(all(len(p['date']) == 10 for p in result['data']['FR']))
         self.assertFalse(any(p['date'] == '2026-09' for p in result['data']['FR']))
         self.assertEqual(result['countries']['IT']['frequency'], 'mensuelle')
+
+    def test_bpstat_selects_daily_ten_year_series(self):
+        self.assertEqual(self.fixture('PT'), [('2026-10-01', 4.03), ('2026-10-02', 3.95), ('2026-10-05', 4.0)])
+        for dim in (18, 40, 45, 63, 70):
+            body = json.loads((FIXTURES / 'PT.json').read_text())
+            series = next(s for s in body['extension']['series'] if s['id'] == 12099459)
+            next(c for c in series['dimension_category'] if c['dimension_id'] == dim)['category_id'] = -1
+            with self.assertRaises(ValueError):
+                parse('PT', json.dumps(body).encode())
+
+    def test_bpstat_sparse_missing_zero_negative_and_index_map(self):
+        body = json.loads((FIXTURES / 'PT.json').read_text())
+        body['value'] = {'15': 0, '16': -0.2}
+        for dim in body['dimension'].values():
+            dim['category']['index'] = {key: i for i, key in enumerate(dim['category']['index'])}
+        self.assertEqual(parse('PT', json.dumps(body).encode()), [('2026-10-01', 0), ('2026-10-02', -0.2)])
+
+    def test_portugal_migration_and_outage_preserve_correct_metadata(self):
+        previous = {'data': {'PT': [{'date': '2026-09', 'value': 3.8608}]},
+                    'countries': {'PT': {'series': 'FM.M.PT.EUR.FR2.BB.PT10YT_RR.YLD',
+                                         'frequency': 'mensuelle', 'source': 'Banque de France — Webstat',
+                                         'lastSuccessAt': '2026-10-02T12:00:00+00:00'}}}
+        def fail(c):
+            if c == 'PT':
+                raise PermissionError('HTTP 403')
+            return self.fixture(c)
+        fallback, failures = collect(previous, fail, NOW)
+        self.assertIn('PT', failures)
+        self.assertEqual(fallback['data']['PT'], previous['data']['PT'])
+        self.assertEqual(fallback['countries']['PT']['frequency'], 'mensuelle')
+        self.assertEqual(fallback['countries']['PT']['source'], 'Banque de France — Webstat')
+        daily, _ = collect(fallback, self.fixture, NOW)
+        self.assertEqual(daily['countries']['PT']['frequency'], 'quotidienne')
+        self.assertEqual(daily['countries']['PT']['series'], '12099459')
+        self.assertTrue(all(len(p['date']) == 10 for p in daily['data']['PT']))
+        outage, _ = collect(daily, fail, NOW)
+        self.assertEqual(outage['data']['PT'], daily['data']['PT'])
+        self.assertEqual(outage['countries']['PT']['frequency'], 'quotidienne')
+        self.assertEqual(outage['countries']['PT']['lastSuccessAt'], daily['countries']['PT']['lastSuccessAt'])
 
 
 if __name__ == '__main__':

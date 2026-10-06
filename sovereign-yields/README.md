@@ -8,11 +8,11 @@ Registre vérifié le 6 octobre 2026. Le fichier `10y.json` alimente l’onglet 
 | Allemagne | Deutsche Bundesbank — `BBSSY.D.REN.EUR.A630.000000WT1010.A` | Quotidienne, jours cotés |
 | Italie | Banque de France, Webstat — `FM.M.IT.EUR.FR2.BB.IT10YT_RR.YLD` | Moyenne mensuelle |
 | Espagne | Banco de España, tableau TI_1_3 — `D_G0B1F0ZP` | Quotidienne, jours cotés |
-| Portugal | Banque de France, Webstat — `FM.M.PT.EUR.FR2.BB.PT10YT_RR.YLD` | Moyenne mensuelle |
+| Portugal | Banco de Portugal, BPstat (données LSEG) — `12099459` | Quotidienne, diffusion hebdomadaire |
 | Grèce | Banque de Grèce, Greek government securities, colonne 10 years / Yield (%) | Quotidienne, jours cotés |
 | Belgique | Banque nationale de Belgique — `BE2:DF_IROLOBE2(1.0)/D.10Y.F` | Quotidienne, jours cotés |
 
-Les URL exactes sont conservées dans `scripts/sovereign_yields.py`, dans `SOURCES`, et reproduites dans le JSON. Les trois séries Webstat sont diffusées par la Banque de France. La source du TEC 10 français est Euronext (`EUXT`). Les séries concernant l’Italie et le Portugal ne doivent pas être attribuées directement à leurs banques centrales nationales.
+Les URL exactes sont conservées dans `scripts/sovereign_yields.py`, dans `SOURCES`, et reproduites dans le JSON. Les deux séries Webstat sont diffusées par la Banque de France. La source du TEC 10 français est Euronext (`EUXT`). La série concernant l’Italie ne doit pas être attribuée directement à sa banque centrale nationale. Le Portugal utilise directement BPstat, dont le fournisseur identifié est LSEG.
 
 ## Actualisation
 
@@ -42,7 +42,7 @@ La source affichée est **Euronext**. Les données sont récupérées depuis l�
 ## Autres sources et choix méthodologiques
 
 - **Italie** : l’export officiel Banque d’Italie `BMK0200`, série `MFN_BMK.D.020.922.0.EUR.210`, comporte des observations quotidiennes mais s’arrêtait au 31 août 2026 lors de la vérification. La série mensuelle Webstat était déjà disponible pour septembre. Export documenté : https://a2a.bancaditalia.it/infostat/dataservices/export/EN/CSV/ALL/CUBE/BANKITALIA/DIFF/BMK0200 . Ne pas confondre fréquence des observations et délai de diffusion.
-- **Portugal** : le tableau BPstat 484 publie des moyennes mensuelles ; son API n’a pas pu être validée depuis l’environnement de mise en place (HTTP 403). Utilisation du flux officiel Webstat vérifié, sans identifiant BPstat supposé.
+- **Portugal** : série quotidienne BPstat `12099459`, rendement des obligations du Trésor à taux fixe et maturité résiduelle de 10 ans, en pourcentage. API officielle du domaine 26, jeu `690b7b36fd36c0dbe249c48cbbc39524`. Accès HTTP 200 vérifié le 6 octobre 2026 depuis le serveur GitHub Actions de collecte ; le 403 concernait l’environnement local de mise en place. Les observations quotidiennes sont diffusées le premier jour ouvré de la semaine et le deuxième jour ouvré du mois ([calendrier BPstat](https://bpstat.bportugal.pt/api/media/files/Calendario_BPstat_data.html)). Le contrôle quotidien intègre chaque lot disponible. L’historique mensuel Webstat est remplacé intégralement à la première collecte BPstat réussie ; en cas d’échec de cette migration, il est conservé avec sa source et sa fréquence mensuelles explicites. Après migration, un incident conserve le dernier historique quotidien valide.
 - **Eurostat** : `irt_lt_mcby_m`, mensuel, conservé en secours. L’API existante était encore à août lors de la vérification.
 - **Webstat** : utilisation des exports CSV publics du catalogue actuel ; pas de dépendance à l’ancienne API `/api/v2.1/series/.../observations` ni à une clé privée.
 
@@ -53,5 +53,6 @@ python -m unittest discover -s scripts -p 'test_sovereign_yields.py'
 python scripts/sovereign_yields.py
 ```
 
-Les fixtures sont de petits extraits des fichiers officiels recueillis le 4 octobre 2026. En cas d’alerte, consulter `countries` dans le JSON et le journal Actions. Corriger le parseur si le format officiel a changé, puis relancer. Le fichier existant doit rester en place pour conserver les dernières valeurs et l’historique grec.
+Les fixtures sont de petits extraits des fichiers officiels recueillis les 4 et 6 octobre 2026 ; `PT.json` couvre plusieurs maturités pour vérifier la sélection exclusive du 10 ans quotidien. En cas d’alerte, consulter `countries` dans le JSON et le journal Actions. Corriger le parseur si le format officiel a changé, puis relancer. Le fichier existant doit rester en place pour conserver les dernières valeurs et l’historique grec.
+
 
