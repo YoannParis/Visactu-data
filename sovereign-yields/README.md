@@ -56,3 +56,11 @@ python scripts/sovereign_yields.py
 Les fixtures sont de petits extraits des fichiers officiels recueillis les 4 et 6 octobre 2026 ; `PT.json` couvre plusieurs maturités pour vérifier la sélection exclusive du 10 ans quotidien. En cas d’alerte, consulter `countries` dans le JSON et le journal Actions. Corriger le parseur si le format officiel a changé, puis relancer. Le fichier existant doit rester en place pour conserver les dernières valeurs et l’historique grec.
 
 
+
+## Test de la source quotidienne italienne MTS — 6 octobre 2026
+
+Test uniquement, sans modification du collecteur ni des taux publiés. Deux lectures de https://www.mtsmarkets.com/ depuis GitHub Actions ont répondu HTTP 200. L’extraction des données structurées de la page identifie exactement une ligne italienne à 10 ans : `AA_Spread_IT`, `Italy (3.8% 1 Jul 2036)`, champ `avg_yield=4.524` (%), relevé affiché le 6 octobre 2026 à 17 h 30 CET/CEST. Le champ `close=4.611` est distinct et ne doit pas remplacer le rendement courant. Le timestamp technique correspond à 17 h 40 min 46 s, pas à l’heure du relevé affiché.
+
+La page testée contient un seul instantané pour 35 instruments, pas un historique quotidien. MTS présente l’historique dans un service distinct (livraisons de fichiers ponctuelles ou abonnement, HTTPS/SFTP/Snowflake) : https://static-prod.mtsmarkets.com/public/2024-09/MTS_Historical-Data_Factsheet.pdf . Aucun export public complet de l’historique italien n’a été validé. Une collecte régulière pourrait accumuler les prochains relevés. L’historique quotidien Banque d’Italie reste disponible jusqu’au 31 août 2026, mais son raccordement à MTS nécessite d’expliciter le changement de source et la période manquante ; ne pas interpoler les jours absents.
+
+Test d’extraction : https://github.com/YoannParis/Visactu-data/actions/runs/37521791232 . Le workflow temporaire de diagnostic a été retiré après le test.
