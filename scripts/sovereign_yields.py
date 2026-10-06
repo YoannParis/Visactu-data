@@ -18,9 +18,13 @@ SOURCES = {
             series=f'FM.M.{c}.EUR.FR2.BB.{c}10YT_RR.YLD',
             url=f'https://webstat.banque-france.fr/export/csv/fr/catalog/FM/FM.M.{c}.EUR.FR2.BB.{c}10YT_RR.YLD',
             note='Moyenne mensuelle du rendement de l’emprunt phare à 10 ans.')
-    for c in ('FR', 'IT', 'PT')
+    for c in ('IT', 'PT')
 }
 SOURCES.update({
+    'FR': dict(source='Euronext', frequency='quotidienne',
+        series='FM.D.FR.EUR.FR2.BB.FRMOYTEC10.HSTA',
+        url='https://webstat.banque-france.fr/export/csv/fr/catalog/FM/FM.D.FR.EUR.FR2.BB.FRMOYTEC10.HSTA',
+        note='TEC 10 : taux à échéance constante de 10 ans, calculé par Euronext et rediffusé par la Banque de France. Observation quotidienne, et non moyenne mensuelle.'),
     'DE': dict(source='Deutsche Bundesbank', frequency='quotidienne',
         series='BBSSY.D.REN.EUR.A630.000000WT1010.A',
         url='https://api.statistiken.bundesbank.de/rest/download/BBSSY/D.REN.EUR.A630.000000WT1010.A?format=csv&lang=en',
@@ -42,8 +46,11 @@ def parse(country, raw):
     text = raw.decode('latin1' if country == 'ES' else 'utf-8-sig')
     if country in ('FR', 'IT', 'PT'):
         rows = list(csv.DictReader(io.StringIO(text), delimiter=';'))
-        if not rows or any(r['series_key'] != src['series'] or r['FREQ'] != 'M' or r['UNIT'] != 'PC' for r in rows):
+        expected_frequency = 'D' if src['frequency'] == 'quotidienne' else 'M'
+        if not rows or any(r['series_key'] != src['series'] or r['FREQ'] != expected_frequency or r['UNIT'] != 'PC' for r in rows):
             raise ValueError('Unexpected Webstat series or units')
+        if country == 'FR' and any(r['SOURCE_AGENCY'] != 'EUXT' for r in rows):
+            raise ValueError('Unexpected TEC10 provider')
         return [(r['time_period'], r['obs_value']) for r in rows]
     if country == 'DE':
         rows = list(csv.reader(io.StringIO(text)))
@@ -122,7 +129,7 @@ def collect(previous, fetcher=fetch_source, now=None):
         src = SOURCES[country]
         old_meta = previous.get('countries', {}).get(country, {})
         old = previous.get('data', {}).get(country, []) if old_meta.get('series') == src['series'] else []
-        meta = {**src, 'checkedAt': stamp, 'lastSuccessAt': old_meta.get('lastSuccessAt'), 'status': 'ok'}
+        meta = {**src, 'checkedAt': stamp, 'lastSuccessAt': old_meta.get('lastSuccessAt') if old_meta.get('series') == src['series'] else None, 'status': 'ok'}
         try:
             fresh = validated(fetcher(country), src['frequency'], now.date())
             if old and fresh[-1]['date'] < old[-1]['date']:
@@ -150,7 +157,7 @@ def collect(previous, fetcher=fetch_source, now=None):
             if meta['status'] != 'ok':
                 failures.append(country)
     return dict(schemaVersion=1, maturity='10Y', frequency='mixte', mode='per_country',
-                source='Banques centrales nationales (détail par pays)', fetchedAt=stamp,
+                source='Euronext et banques centrales nationales (détail par pays)', fetchedAt=stamp,
                 data=data, countries=metadata), failures
 
 
