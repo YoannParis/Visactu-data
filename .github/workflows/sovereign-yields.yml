@@ -1,11 +1,11 @@
-name: Actualiser les taux souverains officiels
+name: Actualiser les taux souverains
 on:
   schedule:
     - cron: '43 19 * * 1-5'
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['scripts/sovereign_yields.py', 'scripts/test_sovereign_yields.py', '.github/workflows/sovereign-yields.yml']
+    paths: ['scripts/sovereign_yields.py', 'scripts/test_sovereign_yields.py', 'scripts/fixtures/**', 'sovereign-yields/history/*.csv', '.github/workflows/sovereign-yields.yml']
 permissions:
   contents: write
 concurrency:

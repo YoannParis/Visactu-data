@@ -10,11 +10,11 @@ FIXTURES = Path(__file__).parent / 'fixtures'
 
 class CollectorTests(unittest.TestCase):
     def fixture(self, c):
-        suffix = '.json' if c == 'PT' else '.html' if c == 'GR' else '.csv'
+        suffix = '.json' if c == 'PT' else '.html' if c in ('GR', 'IT') else '.csv'
         return parse(c, (FIXTURES / (c + suffix)).read_bytes())
 
     def test_real_official_formats(self):
-        expected = {'FR': 4.899, 'IT': 4.3772, 'PT': 4.0, 'GR': 4.53}
+        expected = {'FR': 4.899, 'IT': 4.524, 'PT': 4.0, 'GR': 4.53}
         for c, src in SOURCES.items():
             points = validated(self.fixture(c), src['frequency'], NOW.date())
             self.assertGreater(len(points), 0)
@@ -68,7 +68,56 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result['countries']['FR']['source'], 'Euronext')
         self.assertTrue(all(len(p['date']) == 10 for p in result['data']['FR']))
         self.assertFalse(any(p['date'] == '2026-09' for p in result['data']['FR']))
-        self.assertEqual(result['countries']['IT']['frequency'], 'mensuelle')
+        self.assertEqual(result['countries']['IT']['frequency'], 'quotidienne')
+
+    def test_italy_daily_history_and_source_boundaries(self):
+        previous = {'data': {'IT': [{'date': '2026-09', 'value': 4.3772}]},
+                    'countries': {'IT': {'series': 'FM.M.IT.EUR.FR2.BB.IT10YT_RR.YLD'}}}
+        result, failures = collect(previous, self.fixture, NOW)
+        self.assertNotIn('IT', failures)
+        points = result['data']['IT']
+        self.assertGreater(len(points), 1500)
+        self.assertEqual(len(points), len({p['date'] for p in points}))
+        self.assertTrue(all(len(p['date']) == 10 for p in points))
+        values = {p['date']: p['value'] for p in points}
+        self.assertEqual(values['2026-09-30'], 4.59)  # Countryeconomy, not Investing
+        self.assertEqual(values['2026-10-01'], 4.708)  # Investing
+        self.assertEqual(values['2026-10-05'], 4.638)
+        self.assertEqual(values['2026-10-06'], 4.524)  # MTS, not Investing 4.559
+        self.assertEqual(result['frequency'], 'quotidienne')
+        self.assertEqual(len(result['countries']['IT']['segments']), 3)
+
+    def test_mts_rejects_wrong_maturity_intraday_or_inconsistent_date(self):
+        raw = (FIXTURES / 'IT.html').read_bytes()
+        self.assertEqual(parse('IT', raw), [('2026-10-06', '4.524')])
+        for before, after in [(b'AA_Spread_IT', b'AA_30ySprd_IT'),
+                              (b'5:30 PM', b'4:30 PM'),
+                              (b'10/06/2026', b'10/05/2026'),
+                              (b'Italy (3.8%', b'Spain (3.8%')]:
+            with self.assertRaises(ValueError):
+                parse('IT', raw.replace(before, after))
+
+    def test_italy_migration_outage_and_daily_accumulation(self):
+        previous = {'data': {'IT': [{'date': '2026-09', 'value': 4.3772}]},
+                    'countries': {'IT': {'series': 'FM.M.IT.EUR.FR2.BB.IT10YT_RR.YLD',
+                                         'source': 'Banque de France — Webstat', 'frequency': 'mensuelle',
+                                         'lastSuccessAt': '2026-10-02T12:00:00+00:00'}}}
+        def fail(c):
+            if c == 'IT':
+                raise TimeoutError('MTS outage')
+            return self.fixture(c)
+        fallback, _ = collect(previous, fail, NOW)
+        self.assertEqual(fallback['data']['IT'], previous['data']['IT'])
+        self.assertEqual(fallback['countries']['IT']['frequency'], 'mensuelle')
+        self.assertEqual(fallback['frequency'], 'mixte')
+        daily, _ = collect(fallback, self.fixture, NOW)
+        outage, _ = collect(daily, fail, NOW)
+        self.assertEqual(outage['data']['IT'], daily['data']['IT'])
+        self.assertEqual(outage['countries']['IT']['lastSuccessAt'], daily['countries']['IT']['lastSuccessAt'])
+        def next_day(c):
+            return [('2026-10-07', '4.5')] if c == 'IT' else self.fixture(c)
+        updated, _ = collect(daily, next_day, datetime(2026, 10, 7, tzinfo=timezone.utc))
+        self.assertEqual(updated['data']['IT'][-2:], [{'date': '2026-10-06', 'value': 4.524}, {'date': '2026-10-07', 'value': 4.5}])
 
     def test_bpstat_selects_daily_ten_year_series(self):
         self.assertEqual(self.fixture('PT'), [('2026-10-01', 4.03), ('2026-10-02', 3.95), ('2026-10-05', 4.0)])

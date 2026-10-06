@@ -1,6 +1,6 @@
 # Historique quotidien italien à 10 ans — recherche du 6 octobre 2026
 
-Ces fichiers sont des instantanés de recherche. Le collecteur et les taux publiés sur Visactu ne sont pas modifiés.
+Ces fichiers sont les archives sources du raccordement quotidien publié le 6 octobre 2026. Le collecteur utilise Countryeconomy jusqu’au 30 septembre et Investing.com seulement du 1er au 5 octobre ; MTS/Euronext prend le relais à partir du 6 octobre. Les CSV bruts restent inchangés et séparés.
 
 ## Countryeconomy
 
@@ -24,6 +24,6 @@ https://www.investing.com/rates-bonds/italy-10-year-bond-yield-historical-data
 
 Instrument identifié par le site : 23738, Italy 10-Year Bond Yield. Champ extrait : `last_close`, daté par `rowDateTimestamp`. Le téléchargement complet de longue période depuis l’API n’a pas été validé.
 
-## Utilisation envisagée
+## Raccordement publié
 
-Un historique quotidien sur cinq ans est effectivement récupérable, contrairement à l’historique MTS public qui n’a pas été trouvé. Les deux CSV restent séparés et ne sont pas présentés comme une série MTS/Euronext. Si un raccordement est retenu, documenter les sources et dates de changement, conserver les données originales, et ne pas interpoler les observations manquantes. La Banque d’Italie reste une autre source officielle d’historique quotidien, disponible jusqu’au 31 août 2026 lors du contrôle.
+Un historique quotidien sur cinq ans est effectivement récupérable, contrairement à l’historique MTS public qui n’a pas été trouvé. Les deux CSV restent séparés et ne sont pas présentés comme une série MTS/Euronext. Les sources et dates de changement sont documentées dans les métadonnées du JSON (`countries.IT.segments`), le libellé de source et la note de l’Italie. Les données originales sont conservées et aucun point manquant n’est interpolé. La Banque d’Italie reste une autre source officielle d’historique quotidien, disponible jusqu’au 31 août 2026 lors du contrôle.

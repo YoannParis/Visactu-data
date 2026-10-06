@@ -1,4 +1,4 @@
-"""Collect official 10-year sovereign yields. Python standard library only."""
+"""Collect 10-year sovereign yields with explicit source provenance."""
 import csv
 import io
 import json
@@ -10,17 +10,20 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'sovereign-yields/10y.json'
 SOURCES = {
-    c: dict(source='Banque de France — Webstat', frequency='mensuelle',
-            series=f'FM.M.{c}.EUR.FR2.BB.{c}10YT_RR.YLD',
-            url=f'https://webstat.banque-france.fr/export/csv/fr/catalog/FM/FM.M.{c}.EUR.FR2.BB.{c}10YT_RR.YLD',
-            note='Moyenne mensuelle du rendement de l’emprunt phare à 10 ans.')
-    for c in ('IT',)
-}
-SOURCES.update({
+    'IT': dict(source='MTS/Euronext (depuis le 06/10/2026) ; historique : Countryeconomy (jusqu’au 30/09/2026), Investing.com (01–05/10/2026)',
+        frequency='quotidienne', series='IT10Y.D.MTS_WITH_DOCUMENTED_HISTORY_V1',
+        url='https://www.mtsmarkets.com/',
+        note='Rendement du BTP italien de référence à 10 ans. Relevé MTS de 17 h 30 (heure de Paris), conservé chaque jour de cotation. Historique quotidien Countryeconomy jusqu’au 30/09/2026, puis Investing.com du 01 au 05/10/2026. Changements de fournisseur et d’heure de relevé : les séries ne sont pas parfaitement homogènes. Aucun point interpolé.',
+        segments=[
+            dict(source='Countryeconomy', until='2026-09-30', url='https://countryeconomy.com/bonds/italy'),
+            dict(source='Investing.com', start='2026-10-01', until='2026-10-05', url='https://www.investing.com/rates-bonds/italy-10-year-bond-yield-historical-data'),
+            dict(source='MTS/Euronext', start='2026-10-06', url='https://www.mtsmarkets.com/'),
+        ]),
     'PT': dict(source='Banco de Portugal — BPstat (LSEG)', frequency='quotidienne',
         series='12099459',
         url='https://bpstat.bportugal.pt/data/v1/domains/26/datasets/690b7b36fd36c0dbe249c48cbbc39524?lang=EN&series_ids=12099459',
@@ -42,12 +45,36 @@ SOURCES.update({
     'GR': dict(source='Banque de Grèce', frequency='quotidienne', series='Greek government securities / 10 years / Yield (%)',
         url='https://www.bankofgreece.gr/en/statistics/financial-markets-and-interest-rates/greek-government-securities',
         note='Rendement des titres d’État à 10 ans. Historique quotidien accumulé depuis la mise en service.'),
-})
+}
 
 
 def parse(country, raw):
     src = SOURCES[country]
     text = raw.decode('latin1' if country == 'ES' else 'utf-8-sig')
+    if country == 'IT':
+        rows = {}
+        for encoded in re.findall(r'self\.__next_f\.push\((\[.*?\])\)</script>', text, re.S):
+            item = json.loads(encoded)
+            if len(item) > 1 and isinstance(item[1], str):
+                for encoded_row in re.findall(r'\{"__typename":"MTSIndexRow",[^{}]*\}', item[1]):
+                    row = json.loads(encoded_row)
+                    rows[row['rowId']] = row
+        selected = [r for r in rows.values() if r['index_id'] == 'AA_Spread_IT']
+        if len(selected) != 1 or not selected[0]['instrument_desc'].startswith('Italy ('):
+            raise ValueError('Unexpected MTS Italian 10-year benchmark')
+        # The page's technical timestamp is later than the displayed quote time.
+        # Use the displayed date and only accept the completed 17:30 snapshot.
+        visible = re.sub(r'<script\b[^>]*>.*?</script>', '', text, flags=re.S)
+        visible = re.sub(r'\s+', ' ', unescape(re.sub('<[^>]+>', ' ', visible)))
+        stamps = set(re.findall(r'Time snapshot:\s*(\d{2}/\d{2}/\d{4})\s*-\s*(\d{1,2}:\d{2}\s*[AP]M)\s*CET/CEST', visible))
+        if len(stamps) != 1:
+            raise ValueError('Missing or ambiguous MTS snapshot date')
+        day, clock = stamps.pop()
+        snapshot = datetime.strptime(day + ' ' + clock, '%m/%d/%Y %I:%M %p')
+        technical = datetime.fromtimestamp(int(selected[0]['timestamp']) / 1000, ZoneInfo('Europe/Paris'))
+        if snapshot.date() != technical.date() or snapshot.strftime('%H:%M') != '17:30' or snapshot.date() < date(2026, 10, 6):
+            raise ValueError('MTS snapshot is not a completed daily observation')
+        return [(snapshot.date().isoformat(), selected[0]['avg_yield'])]
     if country == 'PT':
         dataset = json.loads(text)
         expected = {'18': '4314', '19': '14', '23': '3482', '29': '3610',
@@ -78,7 +105,7 @@ def parse(country, raw):
             if value is not None:
                 points.append((day, value))
         return points
-    if country in ('FR', 'IT'):
+    if country == 'FR':
         rows = list(csv.DictReader(io.StringIO(text), delimiter=';'))
         expected_frequency = 'D' if src['frequency'] == 'quotidienne' else 'M'
         if not rows or any(r['series_key'] != src['series'] or r['FREQ'] != expected_frequency or r['UNIT'] != 'PC' for r in rows):
@@ -145,7 +172,7 @@ def validated(points, frequency, today):
 
 
 def fetch_source(country):
-    accept = 'application/json' if country == 'PT' else 'text/csv,text/html;q=0.9,*/*;q=0.8'
+    accept = 'application/json' if country == 'PT' else 'text/html' if country == 'IT' else 'text/csv,text/html;q=0.9,*/*;q=0.8'
     req = urllib.request.Request(SOURCES[country]['url'], headers={
         'User-Agent': 'Visactu-official-yields/1.0', 'Accept': accept})
     with urllib.request.urlopen(req, timeout=50) as res:
@@ -153,6 +180,21 @@ def fetch_source(country):
     if len(raw) > 15_000_000:
         raise ValueError('Oversized response')
     return parse(country, raw)
+
+
+def italian_history():
+    """Documented daily backfill; never overlap the MTS segment or interpolate."""
+    points = []
+    for filename, start, end in [
+        ('italy-10y-countryeconomy.csv', '2020-01-01', '2026-09-30'),
+        ('italy-10y-investing-recent.csv', '2026-10-01', '2026-10-05'),
+    ]:
+        with (ROOT / 'sovereign-yields/history' / filename).open() as handle:
+            rows = csv.DictReader(handle)
+            if rows.fieldnames != ['date', 'yield_percent']:
+                raise ValueError('Unexpected Italian history format')
+            points.extend((r['date'], r['yield_percent']) for r in rows if start <= r['date'] <= end)
+    return points
 
 
 def collect(previous, fetcher=fetch_source, now=None):
@@ -169,16 +211,17 @@ def collect(previous, fetcher=fetch_source, now=None):
             fresh = validated(fetcher(country), src['frequency'], now.date())
             if old and fresh[-1]['date'] < old[-1]['date']:
                 raise ValueError('Source returned older data')
-            # Merge only observations from the SAME series. Preserve Greek rolling history.
-            merged = {p['date']: p['value'] for p in old}
+            # IT is an explicitly documented composite. Its frozen seed never
+            # overlaps MTS dates; all other countries retain a single-source series.
+            merged = dict(italian_history()) if country == 'IT' else {}
+            merged.update({p['date']: p['value'] for p in old})
             merged.update({p['date']: p['value'] for p in fresh})
             points = validated(merged.items(), src['frequency'], now.date())
             meta['lastSuccessAt'] = stamp
         except Exception as exc:
             points = old
-            # During the PT migration only, retain honestly labelled monthly data
-            # if BPstat is unavailable. Never merge them into the daily series.
-            if country == 'PT' and not old and old_meta.get('series') == 'FM.M.PT.EUR.FR2.BB.PT10YT_RR.YLD':
+            # A failed first migration preserves honestly labelled monthly data.
+            if country in ('PT', 'IT') and not old and old_meta.get('series') == f'FM.M.{country}.EUR.FR2.BB.{country}10YT_RR.YLD':
                 points = previous.get('data', {}).get(country, [])
                 meta = {**old_meta, 'checkedAt': stamp, 'attemptedSource': src['source']}
             meta['status'] = 'error'
@@ -196,8 +239,9 @@ def collect(previous, fetcher=fetch_source, now=None):
             data[country], metadata[country] = points, meta
             if meta['status'] != 'ok':
                 failures.append(country)
-    return dict(schemaVersion=1, maturity='10Y', frequency='mixte', mode='per_country',
-                source='Euronext et banques centrales nationales (détail par pays)', fetchedAt=stamp,
+    frequencies = {m['frequency'] for m in metadata.values()}
+    return dict(schemaVersion=1, maturity='10Y', frequency=next(iter(frequencies)) if len(frequencies) == 1 else 'mixte', mode='per_country',
+                source='Euronext/MTS, banques centrales ; historique Italie : Countryeconomy/Investing.com', fetchedAt=stamp,
                 data=data, countries=metadata), failures
 
 
