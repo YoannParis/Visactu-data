@@ -23,6 +23,23 @@ jobs:
               with urllib.request.urlopen(req, timeout=35) as response:
                   body = response.read(5_000_000).decode()
                   print('HTTP', response.status, 'bytes', len(body), flush=True)
+              decoded = []
+              for encoded in re.findall(r'self\.__next_f\.push\((\[.*?\])\)</script>', body, re.S):
+                  item = json.loads(encoded)
+                  if len(item) > 1 and isinstance(item[1], str):
+                      decoded.append(item[1])
+              rows = {}
+              for chunk in decoded:
+                  for encoded in re.findall(r'\{"__typename":"MTSIndexRow",[^{}]*\}', chunk):
+                      row = json.loads(encoded)
+                      rows[row['rowId']] = row
+              selected = [r for r in rows.values() if r['index_id'] == 'AA_Spread_IT']
+              assert len(selected) == 1, 'Expected one current Italian 10-year quote'
+              row = selected[0]
+              assert row['instrument_desc'].startswith('Italy (')
+              assert -10 <= float(row['avg_yield']) <= 100
+              print('PARSED_ITALY_10Y', json.dumps(row), flush=True)
+              print('AVAILABLE_SNAPSHOTS', len(set(r['timestamp'] for r in rows.values())), 'TOTAL_INSTRUMENTS', len(rows), flush=True)
               plain = unescape(re.sub('<[^>]+>', ' ', body))
               plain = re.sub(r'\s+', ' ', plain)
               for pattern in ['European Bond Yields', 'Time snapshot', 'Italy']:
