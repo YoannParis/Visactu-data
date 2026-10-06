@@ -145,8 +145,9 @@ def validated(points, frequency, today):
 
 
 def fetch_source(country):
+    accept = 'application/json' if country == 'PT' else 'text/csv,text/html;q=0.9,*/*;q=0.8'
     req = urllib.request.Request(SOURCES[country]['url'], headers={
-        'User-Agent': 'Visactu-official-yields/1.0', 'Accept': 'application/json,text/csv,text/html;q=0.9,*/*;q=0.8'})
+        'User-Agent': 'Visactu-official-yields/1.0', 'Accept': accept})
     with urllib.request.urlopen(req, timeout=50) as res:
         raw = res.read(15_000_001)
     if len(raw) > 15_000_000:
