@@ -1,7 +1,8 @@
 name: Actualiser les taux souverains
 on:
   schedule:
-    - cron: '43 19 * * 1-5'
+    - cron: '0 12 * * 1,3,5'
+      timezone: 'Europe/Paris'
   workflow_dispatch:
   push:
     branches: [main]
